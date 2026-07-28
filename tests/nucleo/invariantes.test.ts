@@ -336,7 +336,7 @@ describe("Invariante 6 — Campos obligatorios condicionales (tercero / centro d
       moneda: "USD",
       creadoPor: USUARIO,
       lineas: [
-        { cuentaId: fx.cuentas.requiereTercero, debe: "10.00", haber: "0", terceroId: "1" },
+        { cuentaId: fx.cuentas.requiereTercero, debe: "10.00", haber: "0", terceroId: fx.terceroId },
         { cuentaId: fx.cuentas.ventas, debe: "0", haber: "10.00" },
       ],
     });

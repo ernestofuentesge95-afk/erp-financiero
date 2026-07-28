@@ -6,6 +6,7 @@ import { ContabilizacionService } from "./nucleo/contabilizacion.service.js";
 import { registrarRutasCatalogos } from "./routes/catalogos.js";
 import { registrarRutasDocumentos } from "./routes/documentos.js";
 import { registrarRutasReportes } from "./routes/reportes.js";
+import { registrarRutasCxP } from "./routes/cxp.js";
 
 const loggerOptions: FastifyServerOptions["logger"] =
   env.NODE_ENV === "development"
@@ -31,6 +32,7 @@ export function buildApp(): FastifyInstance {
   registrarRutasCatalogos(app, { pool });
   registrarRutasDocumentos(app, { contabilizacion });
   registrarRutasReportes(app, { pool });
+  registrarRutasCxP(app, { pool, contabilizacion });
 
   app.addHook("onClose", async () => {
     await pool.end();

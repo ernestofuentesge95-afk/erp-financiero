@@ -1,4 +1,5 @@
 export type EstadoDocumento = "borrador" | "contabilizado" | "anulado";
+export type EstadoPartida = "abierta" | "compensada";
 
 export interface LineaInput {
   cuentaId: string;
@@ -7,6 +8,14 @@ export interface LineaInput {
   terceroId?: string;
   centroCostoId?: string;
   descripcion?: string;
+  /** Vencimiento de la partida (solo cuentas con gestion_partidas_abiertas). */
+  fechaVencimiento?: string;
+  /** Marca esta línea como el ORIGEN de una partida abierta nueva (p.ej. el
+   * haber de CxP de una factura). Solo puede ser 'abierta' al crearse. */
+  estadoPartidaInicial?: "abierta";
+  /** Marca esta línea como una COMPENSACIÓN que aplica contra la partida
+   * abierta `lineaId`. No se puede combinar con estadoPartidaInicial. */
+  compensadaPorId?: string;
 }
 
 export interface CrearBorradorInput {
@@ -36,6 +45,9 @@ export interface LineaDocumento {
   terceroId: string | null;
   centroCostoId: string | null;
   descripcion: string | null;
+  fechaVencimiento: string | null;
+  compensadaPorId: string | null;
+  estadoPartida: EstadoPartida | null;
 }
 
 export interface Documento {

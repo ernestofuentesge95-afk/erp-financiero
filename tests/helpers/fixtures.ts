@@ -21,10 +21,28 @@ export interface Fixture {
   cuentas: FixtureCuentas;
   tipoDocumentoAsId: string;
   tipoDocumentoStId: string;
+  terceroId: string;
 }
 
-function codigo(prefijo: string): string {
+export function codigo(prefijo: string): string {
   return `${prefijo}_${randomUUID().slice(0, 8)}`;
+}
+
+/** Catálogo compartido (tipo_documento es global): crea o reutiliza por código. */
+export async function obtenerOCrearTipoDocumento(
+  pool: Pool,
+  tipoCodigo: string,
+  nombre: string,
+  moduloOrigen: string,
+): Promise<string> {
+  const result = await pool.query<{ id: string }>(
+    `INSERT INTO tipo_documento (codigo, nombre, modulo_origen)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (codigo) DO UPDATE SET codigo = EXCLUDED.codigo
+     RETURNING id`,
+    [tipoCodigo, nombre, moduloOrigen],
+  );
+  return result.rows[0]!.id;
 }
 
 /**
@@ -133,23 +151,15 @@ export async function crearFixture(pool: Pool): Promise<Fixture> {
   const periodoAbiertoId = await crearPeriodo(mesAbierto, "abierto");
   const periodoCerradoId = await crearPeriodo(mesCerrado, "cerrado");
 
-  const obtenerOCrearTipoDocumento = async (
-    tipoCodigo: string,
-    nombre: string,
-    moduloOrigen: string,
-  ): Promise<string> => {
-    const result = await pool.query<{ id: string }>(
-      `INSERT INTO tipo_documento (codigo, nombre, modulo_origen)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (codigo) DO UPDATE SET codigo = EXCLUDED.codigo
-       RETURNING id`,
-      [tipoCodigo, nombre, moduloOrigen],
-    );
-    return result.rows[0]!.id;
-  };
+  const tipoDocumentoAsId = await obtenerOCrearTipoDocumento(pool, "AS", "Asiento manual", "GL");
+  const tipoDocumentoStId = await obtenerOCrearTipoDocumento(pool, "ST", "Storno", "GL");
 
-  const tipoDocumentoAsId = await obtenerOCrearTipoDocumento("AS", "Asiento manual", "GL");
-  const tipoDocumentoStId = await obtenerOCrearTipoDocumento("ST", "Storno", "GL");
+  const terceroResult = await pool.query<{ id: string }>(
+    `INSERT INTO tercero (empresa_id, codigo, nombre, es_cliente, es_proveedor)
+     VALUES ($1, $2, 'Tercero de prueba', true, true) RETURNING id`,
+    [empresaId, codigo("TERC")],
+  );
+  const terceroId = terceroResult.rows[0]!.id;
 
   return {
     empresaId,
@@ -161,6 +171,7 @@ export async function crearFixture(pool: Pool): Promise<Fixture> {
     cuentas,
     tipoDocumentoAsId,
     tipoDocumentoStId,
+    terceroId,
   };
 }
 

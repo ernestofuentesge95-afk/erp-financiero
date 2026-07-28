@@ -112,6 +112,8 @@ const PLAN_CUENTAS_SV_PYME: CuentaSemilla[] = [
   { codigo: "5203", nombre: "Servicios básicos", tipo: "gasto", naturaleza: "deudora", padre: "51", requiereCentroCosto: true },
   { codigo: "5204", nombre: "Depreciaciones", tipo: "gasto", naturaleza: "deudora", padre: "51", requiereCentroCosto: true },
   { codigo: "5205", nombre: "Gastos financieros", tipo: "gasto", naturaleza: "deudora", padre: "51" },
+  { codigo: "5206", nombre: "Gastos generales", tipo: "gasto", naturaleza: "deudora", padre: "51", requiereCentroCosto: true },
+  { codigo: "5207", nombre: "Devoluciones y descuentos sobre compras", tipo: "gasto", naturaleza: "acreedora", padre: "51" },
 ];
 
 const TIPOS_DOCUMENTO: Array<{ codigo: string; nombre: string; moduloOrigen: string }> = [
@@ -137,7 +139,40 @@ async function upsertTipoDocumento(codigo: string, nombre: string, moduloOrigen:
   );
 }
 
-async function seedSociedadDemo(planCuentasId: string): Promise<void> {
+async function upsertIndicadorImpuesto(
+  sociedadId: string,
+  codigo: string,
+  tasa: number,
+  cuentaIvaCreditoId: string | null,
+  cuentaIvaDebitoId: string | null,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO indicador_impuesto (sociedad_id, codigo, tasa, cuenta_iva_credito_id, cuenta_iva_debito_id)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (sociedad_id, codigo) DO UPDATE SET
+       tasa = EXCLUDED.tasa,
+       cuenta_iva_credito_id = EXCLUDED.cuenta_iva_credito_id,
+       cuenta_iva_debito_id = EXCLUDED.cuenta_iva_debito_id`,
+    [sociedadId, codigo, tasa, cuentaIvaCreditoId, cuentaIvaDebitoId],
+  );
+}
+
+async function upsertReglaDeterminacionCuenta(
+  sociedadId: string,
+  modulo: string,
+  operacion: string,
+  cuentaId: string,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO regla_determinacion_cuenta (sociedad_id, modulo, operacion, condicion, cuenta_id)
+     VALUES ($1, $2, $3, NULL, $4)
+     ON CONFLICT (sociedad_id, modulo, operacion, COALESCE(condicion, ''))
+     DO UPDATE SET cuenta_id = EXCLUDED.cuenta_id`,
+    [sociedadId, modulo, operacion, cuentaId],
+  );
+}
+
+async function seedSociedadDemo(planCuentasId: string, idsPorCodigo: Map<string, string>): Promise<void> {
   const empresaResult = await pool.query<{ id: string }>(
     `INSERT INTO empresa (codigo, nombre)
      VALUES ('DEMO', 'Empresa Demo, S.A. de C.V.')
@@ -185,7 +220,48 @@ async function seedSociedadDemo(planCuentasId: string): Promise<void> {
     [ejercicioId, `${anio}-12-31`],
   );
 
+  // IVA 13% El Salvador.
+  await upsertIndicadorImpuesto(
+    sociedadId,
+    "IVA13",
+    0.13,
+    idsPorCodigo.get("1104")!,
+    idsPorCodigo.get("2102")!,
+  );
+  await upsertIndicadorImpuesto(sociedadId, "EXENTO", 0, null, null);
+
+  // Reglas de determinación de cuentas AP default: quien captura una
+  // factura o pago nunca elige cuenta_id, solo estos códigos de operación.
+  await upsertReglaDeterminacionCuenta(sociedadId, "AP", "AP.CXP_DEFAULT", idsPorCodigo.get("2101")!);
+  await upsertReglaDeterminacionCuenta(sociedadId, "BK", "BK.BANCO_DEFAULT", idsPorCodigo.get("1102")!);
+  await upsertReglaDeterminacionCuenta(
+    sociedadId,
+    "AP",
+    "AP.NC_CONTRAPARTIDA",
+    idsPorCodigo.get("5207")!,
+  );
+  await upsertReglaDeterminacionCuenta(sociedadId, "AP", "AP.GASTO_OPERACION", idsPorCodigo.get("5206")!);
+  await upsertReglaDeterminacionCuenta(sociedadId, "AP", "AP.GASTO_SUELDOS", idsPorCodigo.get("5201")!);
+  await upsertReglaDeterminacionCuenta(sociedadId, "AP", "AP.GASTO_ALQUILER", idsPorCodigo.get("5202")!);
+  await upsertReglaDeterminacionCuenta(sociedadId, "AP", "AP.GASTO_SERVICIOS", idsPorCodigo.get("5203")!);
+
+  await pool.query(
+    `INSERT INTO centro_costo (sociedad_id, codigo, nombre)
+     VALUES ($1, 'ADM', 'Administración')
+     ON CONFLICT (sociedad_id, codigo) DO UPDATE SET nombre = EXCLUDED.nombre`,
+    [sociedadId],
+  );
+
+  const proveedorResult = await pool.query<{ id: string }>(
+    `INSERT INTO tercero (empresa_id, codigo, nombre, nit, es_proveedor, condicion_pago_dias)
+     VALUES ($1, 'PROV001', 'Proveedor Demo, S.A. de C.V.', '0614-111111-111-1', true, 30)
+     ON CONFLICT (empresa_id, codigo) DO UPDATE SET nombre = EXCLUDED.nombre
+     RETURNING id`,
+    [empresaId],
+  );
+
   console.log(`Sociedad demo: empresa=${empresaId} sociedad=${sociedadId} ejercicio ${anio}=${ejercicioId}`);
+  console.log(`Proveedor demo: ${proveedorResult.rows[0]!.id}`);
 }
 
 async function main(): Promise<void> {
@@ -203,7 +279,7 @@ async function main(): Promise<void> {
   }
   console.log(`Tipos de documento creados/actualizados: ${TIPOS_DOCUMENTO.length}`);
 
-  await seedSociedadDemo(planCuentasId);
+  await seedSociedadDemo(planCuentasId, idsPorCodigo);
 
   await pool.end();
   console.log("Seed completo.");

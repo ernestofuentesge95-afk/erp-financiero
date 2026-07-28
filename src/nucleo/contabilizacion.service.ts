@@ -6,10 +6,19 @@ import {
   DocumentoNoEncontradoError,
   EstadoInvalidoError,
   LineaInvalidaError,
+  PartidaNoEncontradaError,
   PeriodoCerradoError,
   PeriodoNoEncontradoError,
 } from "./errores.js";
-import type { CrearBorradorInput, Documento, EstadoDocumento, LineaDocumento, LineaInput } from "./tipos.js";
+import { obtenerPartida } from "./partidas.js";
+import type {
+  CrearBorradorInput,
+  Documento,
+  EstadoDocumento,
+  EstadoPartida,
+  LineaDocumento,
+  LineaInput,
+} from "./tipos.js";
 
 interface DocumentoRow {
   id: string;
@@ -45,6 +54,9 @@ interface LineaRow {
   tercero_id: string | null;
   centro_costo_id: string | null;
   descripcion: string | null;
+  fecha_vencimiento: string | null;
+  compensada_por_id: string | null;
+  estado_partida: EstadoPartida | null;
 }
 
 interface CuentaRow {
@@ -53,6 +65,7 @@ interface CuentaRow {
   activa: boolean;
   requiere_tercero: boolean;
   requiere_centro_costo: boolean;
+  gestion_partidas_abiertas: boolean;
 }
 
 function mapLinea(row: LineaRow): LineaDocumento {
@@ -68,6 +81,9 @@ function mapLinea(row: LineaRow): LineaDocumento {
     terceroId: row.tercero_id,
     centroCostoId: row.centro_costo_id,
     descripcion: row.descripcion,
+    fechaVencimiento: row.fecha_vencimiento,
+    compensadaPorId: row.compensada_por_id,
+    estadoPartida: row.estado_partida,
   };
 }
 
@@ -119,7 +135,7 @@ function validarLineasEstructura(lineas: LineaInput[]): void {
 async function validarCuentas(client: PoolClient, lineas: LineaInput[]): Promise<void> {
   const ids = [...new Set(lineas.map((l) => l.cuentaId))];
   const result = await client.query<CuentaRow>(
-    `SELECT id, permite_movimientos, activa, requiere_tercero, requiere_centro_costo
+    `SELECT id, permite_movimientos, activa, requiere_tercero, requiere_centro_costo, gestion_partidas_abiertas
      FROM cuenta WHERE id = ANY($1::bigint[])`,
     [ids],
   );
@@ -146,6 +162,20 @@ async function validarCuentas(client: PoolClient, lineas: LineaInput[]): Promise
     if (cuenta.requiere_centro_costo && !linea.centroCostoId) {
       throw new LineaInvalidaError(
         `Línea ${index + 1}: la cuenta ${linea.cuentaId} requiere centro_costo_id.`,
+      );
+    }
+    const usaPartidasAbiertas =
+      linea.estadoPartidaInicial !== undefined ||
+      linea.compensadaPorId !== undefined ||
+      linea.fechaVencimiento !== undefined;
+    if (usaPartidasAbiertas && !cuenta.gestion_partidas_abiertas) {
+      throw new LineaInvalidaError(
+        `Línea ${index + 1}: la cuenta ${linea.cuentaId} no gestiona partidas abiertas.`,
+      );
+    }
+    if (linea.estadoPartidaInicial !== undefined && linea.compensadaPorId !== undefined) {
+      throw new LineaInvalidaError(
+        `Línea ${index + 1}: una línea no puede ser origen y compensación de partida a la vez.`,
       );
     }
   });
@@ -274,8 +304,9 @@ export class ContabilizacionService {
         const lineaResult = await client.query<LineaRow>(
           `INSERT INTO linea_documento (
              documento_id, numero_linea, cuenta_id, debe, haber, debe_ml, haber_ml,
-             tercero_id, centro_costo_id, descripcion
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             tercero_id, centro_costo_id, descripcion,
+             fecha_vencimiento, compensada_por_id, estado_partida
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
            RETURNING *`,
           [
             documentoRow.id,
@@ -288,6 +319,9 @@ export class ContabilizacionService {
             linea.terceroId ?? null,
             linea.centroCostoId ?? null,
             linea.descripcion ?? null,
+            linea.fechaVencimiento ?? null,
+            linea.compensadaPorId ?? null,
+            linea.estadoPartidaInicial ?? null,
           ],
         );
         lineas.push(mapLinea(lineaResult.rows[0]!));
@@ -487,6 +521,49 @@ export class ContabilizacionService {
 
       await client.query("COMMIT");
       return mapDocumento(stornoContabilizado, lineasStorno);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Recalcula el saldo derivado de una partida abierta (invariante 8: nunca
+   * se guarda un saldo, se deriva de linea_documento) y, si llegó a cero, la
+   * marca 'compensada' — la única escritura permitida en un documento ya
+   * contabilizado (ver fn_linea_documento_before_write). Lo llaman
+   * PagoService y NotaCreditoProveedorService después de contabilizar la
+   * línea que aplica contra la partida.
+   */
+  async recalcularEstadoPartida(
+    lineaAbiertaId: string,
+    usuario: string,
+  ): Promise<{ saldoAbierto: string; estadoPartida: EstadoPartida }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const partida = await obtenerPartida(client, lineaAbiertaId);
+      if (!partida) {
+        throw new PartidaNoEncontradaError(lineaAbiertaId);
+      }
+
+      let estadoPartida = partida.estadoPartida;
+      if (partida.estadoPartida === "abierta" && partida.saldoAbierto.isZero()) {
+        await client.query(`UPDATE linea_documento SET estado_partida = 'compensada' WHERE id = $1`, [
+          lineaAbiertaId,
+        ]);
+        await registrarAuditoria(client, usuario, "COMPENSAR_PARTIDA", "linea_documento", lineaAbiertaId, {
+          montoOriginal: formatearMonto(partida.montoOriginal),
+          montoCompensado: formatearMonto(partida.montoCompensado),
+        });
+        estadoPartida = "compensada";
+      }
+
+      await client.query("COMMIT");
+      return { saldoAbierto: formatearMonto(partida.saldoAbierto), estadoPartida };
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;

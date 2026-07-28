@@ -150,10 +150,33 @@ Numeración correlativa **sin huecos** por sociedad + tipo + ejercicio.
 | debe_ml / haber_ml | NUMERIC(15,2) | importes en moneda local (funcional), calculados con tipo_cambio |
 | tercero_id | FK → tercero, nullable | obligatorio si la cuenta lo requiere |
 | centro_costo_id | FK → centro_costo, nullable | obligatorio si la cuenta lo requiere |
-| fecha_vencimiento | DATE, nullable | para partidas de CxC / CxP |
+| fecha_vencimiento | DATE, nullable | solo en la línea origen de una partida (CxC / CxP) |
 | descripcion | TEXT | |
-| compensada_por_id | FK → linea_documento, nullable | compensación de partidas abiertas (clearing) |
-| estado_partida | TEXT, nullable | `abierta` \| `compensada` — solo en cuentas con gestión de partidas abiertas |
+| compensada_por_id | FK → linea_documento, nullable | solo en una línea de **compensación**; apunta a la línea **origen** que salda |
+| estado_partida | TEXT, nullable | solo en una línea **origen**: `abierta` \| `compensada` |
+
+### Compensación de partidas abiertas (clearing)
+
+Implementado en Fase 2 (CxP); mismo mecanismo aplica a CxC (Fase 3) y bancos. Regla de
+dirección, para que un pago parcial pueda referenciar la misma partida más de una vez:
+
+- **`estado_partida`** vive únicamente en la línea que **origina** la partida (p.ej. el
+  `haber` de CxP de una factura, o el `debe` de CxC de una factura a cliente). Nace
+  `abierta` y solo puede transicionar a `compensada`; nunca al revés.
+- **`compensada_por_id`** vive únicamente en la línea que **aplica/compensa** (un pago,
+  una nota de crédito): apunta a la línea origen que salda. No es `UNIQUE` — varias
+  líneas de compensación (pagos parciales sucesivos) pueden apuntar a la misma partida
+  origen. Una línea nunca es origen y compensación a la vez.
+- Una línea con `estado_partida` o `compensada_por_id` requiere que su `cuenta` tenga
+  `gestion_partidas_abiertas = true`.
+- El **saldo abierto** de una partida nunca se guarda (invariante 8): se deriva como
+  `monto_original − Σ monto de las líneas cuyo compensada_por_id la referencia` (solo
+  sobre documentos `contabilizado`). Cuando ese saldo llega a cero, la línea origen pasa
+  a `estado_partida = compensada`.
+- Esta es la **única excepción** a la inmutabilidad de `linea_documento` en un documento
+  ya `contabilizado`: un `UPDATE` que cambie *solo* `estado_partida`, y solo de `abierta`
+  a `compensada`, está permitido (trigger `fn_linea_documento_before_write`); cualquier
+  otro cambio se rechaza igual que en cualquier otro campo.
 
 ### Ciclo de vida e inmutabilidad
 
@@ -161,14 +184,19 @@ Numeración correlativa **sin huecos** por sociedad + tipo + ejercicio.
 borrador ──(contabilizar)──▶ contabilizado ──(storno)──▶ anulado
 ```
 
-- En `borrador` el documento puede editarse o eliminarse.
+- En `borrador` el documento (y sus líneas) puede editarse o eliminarse.
 - Al **contabilizar** (transacción atómica): se valida partida doble, período abierto,
   cuentas válidas, campos obligatorios; se asigna número correlativo; se fija el período.
-- Un documento `contabilizado` **jamás se actualiza ni se borra**. Prohibido a nivel de
-  aplicación **y** de base de datos (trigger que rechaza UPDATE/DELETE salvo el cambio
-  de estado a `anulado` y el marcado de compensación).
+- Un documento `contabilizado` **jamás se actualiza ni se borra**, salvo el cambio de
+  estado a `anulado` (storno). Una línea de un documento `contabilizado` tampoco se
+  actualiza ni se borra, salvo el marcado de compensación descrito arriba. Ambas
+  excepciones están prohibidas a nivel de aplicación **y** reforzadas con triggers en
+  base de datos que rechazan cualquier otro `UPDATE`/`DELETE`.
 - El **storno** crea un documento nuevo tipo `ST` con las líneas invertidas exactas,
-  `documento_origen_id` apuntando al original, y marca el original como `anulado`.
+  `documento_origen_id` apuntando al original, y marca el original como `anulado`. El
+  storno no mueve partidas abiertas: sus líneas no llevan `estado_partida` ni
+  `compensada_por_id` (limitación conocida — anular una factura con pagos parciales ya
+  aplicados requiere revertir esos pagos primero; no está resuelto todavía).
 
 ---
 

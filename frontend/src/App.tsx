@@ -5,6 +5,7 @@ import { CapturaFacturaPagina } from "./paginas/CapturaFacturaPagina";
 import { RegistroPagoPagina } from "./paginas/RegistroPagoPagina";
 import { PartidasAbiertasPagina } from "./paginas/PartidasAbiertasPagina";
 import { AntiguedadPagina } from "./paginas/AntiguedadPagina";
+import { AuxiliarProveedorPagina } from "./paginas/AuxiliarProveedorPagina";
 
 export default function App(): React.JSX.Element {
   return (
@@ -17,6 +18,7 @@ export default function App(): React.JSX.Element {
             <Route path="/pagos" element={<RegistroPagoPagina />} />
             <Route path="/partidas-abiertas" element={<PartidasAbiertasPagina />} />
             <Route path="/antiguedad" element={<AntiguedadPagina />} />
+            <Route path="/auxiliar-proveedor" element={<AuxiliarProveedorPagina />} />
             <Route path="*" element={<Navigate to="/facturas" replace />} />
           </Route>
         </Routes>

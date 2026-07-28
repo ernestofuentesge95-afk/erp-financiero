@@ -2,11 +2,12 @@ import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import { z } from "zod";
 import { validarCuerpo } from "../http/validar.js";
+import { DomainError } from "../errors.js";
 import type { ContabilizacionService } from "../nucleo/contabilizacion.service.js";
 import { FacturaProveedorService } from "../modulos/cxp/factura-proveedor.service.js";
 import { PagoService } from "../modulos/cxp/pago.service.js";
 import { NotaCreditoProveedorService } from "../modulos/cxp/nota-credito-proveedor.service.js";
-import { antiguedadCxP, partidasAbiertasPorProveedor } from "../modulos/cxp/reportes.js";
+import { antiguedadCxP, auxiliarProveedor, partidasAbiertasPorProveedor } from "../modulos/cxp/reportes.js";
 
 const lineaFacturaSchema = z.object({
   operacion: z.string().min(1),
@@ -48,6 +49,13 @@ const registrarNotaCreditoSchema = z.object({
   monto: z.string(),
   operacionContrapartida: z.string().min(1),
   creadoPor: z.string().min(1),
+});
+
+const auxiliarProveedorQuerySchema = z.object({
+  sociedadId: z.string().min(1),
+  terceroId: z.string().min(1),
+  fechaDesde: z.string(),
+  fechaHasta: z.string(),
 });
 
 const crearTerceroSchema = z.object({
@@ -126,6 +134,18 @@ export function registrarRutasCxP(
       return [];
     }
     return antiguedadCxP(pool, { sociedadId: query.sociedadId, fechaCorte: query.fechaCorte });
+  });
+
+  app.get("/cxp/auxiliar-proveedor", async (request) => {
+    const resultado = auxiliarProveedorQuerySchema.safeParse(request.query);
+    if (!resultado.success) {
+      throw new DomainError(
+        "VALIDACION",
+        resultado.error.issues.map((i) => i.message).join("; "),
+        400,
+      );
+    }
+    return auxiliarProveedor(pool, resultado.data);
   });
 
   app.get("/empresas/:id/terceros", async (request) => {

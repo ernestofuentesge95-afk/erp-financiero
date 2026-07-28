@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { aMonto, formatearMonto } from "../../nucleo/dinero.js";
+import type { EstadoPartida } from "../../nucleo/tipos.js";
 
 export interface PartidaAbiertaReporte {
   lineaId: string;
@@ -166,4 +167,100 @@ export async function antiguedadCxP(pool: Pool, input: AntiguedadCxPInput): Prom
   }
 
   return [...porProveedor.values()];
+}
+
+export interface MovimientoAuxiliarProveedor {
+  lineaId: string;
+  documentoId: string;
+  fecha: string;
+  tipoDocumento: string;
+  numero: string | null;
+  referencia: string | null;
+  cargo: string;
+  abono: string;
+  saldoAcumulado: string;
+  /** Solo presente en la línea origen de una partida (factura, NC); null en pagos. */
+  estadoPartida: EstadoPartida | null;
+}
+
+export interface AuxiliarProveedorInput {
+  sociedadId: string;
+  terceroId: string;
+  fechaDesde: string;
+  fechaHasta: string;
+}
+
+export interface AuxiliarProveedorResultado {
+  movimientos: MovimientoAuxiliarProveedor[];
+  saldoFinal: string;
+}
+
+interface FilaAuxiliar {
+  linea_id: string;
+  documento_id: string;
+  numero: string | null;
+  tipo_documento_codigo: string;
+  referencia: string | null;
+  fecha_documento: string;
+  debe_ml: string;
+  haber_ml: string;
+  estado_partida: EstadoPartida | null;
+}
+
+/**
+ * Auxiliar de proveedor (estado de cuenta): todos los movimientos de CxP de
+ * un proveedor en un rango de fechas — facturas, notas de crédito y pagos,
+ * incluidas las partidas ya compensadas — con saldo corriente acumulado.
+ * 100% derivado de linea_documento, igual que partidasAbiertasPorProveedor,
+ * solo que aquí no se filtra por estado_partida ni se neta por partida: cada
+ * línea es su propia fila con su propio cargo/abono. Incluye documentos
+ * `anulado` además de `contabilizado` por la misma razón que
+ * balanceDeComprobacion (núcleo/reportes.ts): un storno no borra el
+ * original, lo compensa con líneas espejo, y ambos lados deben contar para
+ * que el saldo acumulado sea correcto.
+ *
+ * Orden cronológico: por fecha_documento y luego por d.id (PK autoincremental
+ * compartida por toda la tabla documento), nunca por d.numero — numero es
+ * correlativo POR tipo_documento (invariante 7), así que una factura #2 y un
+ * pago #1 del mismo día no dicen nada sobre cuál pasó primero.
+ */
+export async function auxiliarProveedor(
+  pool: Pool,
+  input: AuxiliarProveedorInput,
+): Promise<AuxiliarProveedorResultado> {
+  const result = await pool.query<FilaAuxiliar>(
+    `SELECT ld.id AS linea_id, d.id AS documento_id, d.numero, td.codigo AS tipo_documento_codigo,
+            d.referencia, d.fecha_documento, ld.debe_ml, ld.haber_ml, ld.estado_partida
+     FROM linea_documento ld
+     JOIN documento d ON d.id = ld.documento_id
+     JOIN cuenta cu ON cu.id = ld.cuenta_id
+     JOIN tipo_documento td ON td.id = d.tipo_documento_id
+     WHERE d.sociedad_id = $1
+       AND ld.tercero_id = $2
+       AND d.estado IN ('contabilizado', 'anulado')
+       AND cu.gestion_partidas_abiertas = true
+       AND cu.tipo = 'pasivo'
+       AND d.fecha_documento BETWEEN $3 AND $4
+     ORDER BY d.fecha_documento, d.id, ld.numero_linea`,
+    [input.sociedadId, input.terceroId, input.fechaDesde, input.fechaHasta],
+  );
+
+  let saldo = aMonto(0);
+  const movimientos: MovimientoAuxiliarProveedor[] = result.rows.map((row) => {
+    saldo = saldo.plus(row.haber_ml).minus(row.debe_ml);
+    return {
+      lineaId: row.linea_id,
+      documentoId: row.documento_id,
+      fecha: row.fecha_documento,
+      tipoDocumento: row.tipo_documento_codigo,
+      numero: row.numero,
+      referencia: row.referencia,
+      cargo: formatearMonto(row.debe_ml),
+      abono: formatearMonto(row.haber_ml),
+      saldoAcumulado: formatearMonto(saldo),
+      estadoPartida: row.estado_partida,
+    };
+  });
+
+  return { movimientos, saldoFinal: formatearMonto(saldo) };
 }

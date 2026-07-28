@@ -7,6 +7,7 @@ const ENLACES = [
   { ruta: "/pagos", etiqueta: "Registro de pago" },
   { ruta: "/partidas-abiertas", etiqueta: "Partidas abiertas" },
   { ruta: "/antiguedad", etiqueta: "Antigüedad CxP" },
+  { ruta: "/auxiliar-proveedor", etiqueta: "Auxiliar de proveedor" },
 ];
 
 export function Layout(): React.JSX.Element {

@@ -1,5 +1,6 @@
 import type {
   AntiguedadProveedor,
+  AuxiliarProveedorResultado,
   CentroCosto,
   Cuenta,
   Documento,
@@ -83,4 +84,11 @@ export const api = {
 
   antiguedad: (params: { sociedadId: string; fechaCorte?: string }): Promise<AntiguedadProveedor[]> =>
     solicitar(`/cxp/antiguedad${query(params)}`),
+
+  auxiliarProveedor: (params: {
+    sociedadId: string;
+    terceroId: string;
+    fechaDesde: string;
+    fechaHasta: string;
+  }): Promise<AuxiliarProveedorResultado> => solicitar(`/cxp/auxiliar-proveedor${query(params)}`),
 };

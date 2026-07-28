@@ -180,3 +180,21 @@ export interface AntiguedadProveedor {
   buckets: BucketAntiguedad[];
   total: string;
 }
+
+export interface MovimientoAuxiliarProveedor {
+  lineaId: string;
+  documentoId: string;
+  fecha: string;
+  tipoDocumento: string;
+  numero: string | null;
+  referencia: string | null;
+  cargo: string;
+  abono: string;
+  saldoAcumulado: string;
+  estadoPartida: EstadoPartida | null;
+}
+
+export interface AuxiliarProveedorResultado {
+  movimientos: MovimientoAuxiliarProveedor[];
+  saldoFinal: string;
+}

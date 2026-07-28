@@ -71,13 +71,20 @@ Entregables:
 5. Reportes: partidas abiertas por proveedor, **antigüedad de saldos CxP**
    (buckets 0-30 / 31-60 / 61-90 / +90).
 6. Primer frontend: pantallas de captura de factura, registro de pago, consulta de
-   partidas y antigüedad.
+   partidas, antigüedad y auxiliar de proveedor.
+7. **Auxiliar de proveedor** (estado de cuenta): dado un proveedor y un rango de
+   fechas, todos sus movimientos (facturas, notas de crédito, pagos) — incluidas las
+   partidas ya compensadas —, con fecha, tipo y número de documento, referencia, cargo,
+   abono, saldo corriente acumulado y estado de la partida (abierta / compensada).
+   100% derivado de `linea_documento`, sin tablas nuevas.
 
 **Criterios de salida:**
 - E2e: factura $1,130 (gasto $1,000 + IVA $130) → pago parcial $500 → partida queda
   abierta por $630 → pago $630 → partida compensada, saldo CxP del proveedor = 0.
 - El usuario que captura la factura nunca eligió cuentas contables: todo salió de
   `regla_determinacion_cuenta` e `indicador_impuesto`.
+- El saldo final del auxiliar de un proveedor coincide con la suma de sus partidas
+  abiertas (mismo saldo, dos caminos de cálculo distintos).
 
 ---
 

@@ -4,6 +4,7 @@ import { crearFixtureCxP, type FixtureCxP } from "../helpers/fixturesCxp.js";
 import { fechaEnPeriodoAbierto } from "../helpers/fixtures.js";
 import { ContabilizacionService } from "../../src/nucleo/contabilizacion.service.js";
 import {
+  FacturaDuplicadaError,
   IndicadorImpuestoNoEncontradoError,
   LineaInvalidaError,
   MontoAplicacionExcedeSaldoError,
@@ -137,6 +138,81 @@ describe("FacturaProveedorService", () => {
         creadoPor: USUARIO,
       }),
     ).rejects.toBeInstanceOf(IndicadorImpuestoNoEncontradoError);
+  });
+
+  it("rechaza una segunda factura con la misma referencia para el mismo proveedor", async () => {
+    const referencia = "FACT-DUP-0001";
+    await servicios.facturas.registrarFactura({
+      sociedadId: fx.sociedadId,
+      terceroId: fx.terceroId,
+      fecha: fechaEnPeriodoAbierto(),
+      referencia,
+      lineas: [{ operacion: "AP.GASTO_OPERACION", monto: "10.00" }],
+      creadoPor: USUARIO,
+    });
+
+    await expect(
+      servicios.facturas.registrarFactura({
+        sociedadId: fx.sociedadId,
+        terceroId: fx.terceroId,
+        fecha: fechaEnPeriodoAbierto(),
+        referencia,
+        lineas: [{ operacion: "AP.GASTO_OPERACION", monto: "20.00" }],
+        creadoPor: USUARIO,
+      }),
+    ).rejects.toBeInstanceOf(FacturaDuplicadaError);
+  });
+
+  it("permite la misma referencia para un proveedor distinto", async () => {
+    const referencia = "FACT-DUP-0002";
+    const otroProveedorResult = await testPool.query<{ id: string }>(
+      `INSERT INTO tercero (empresa_id, codigo, nombre, es_proveedor, condicion_pago_dias)
+       VALUES ($1, $2, 'Otro proveedor de prueba', true, 30) RETURNING id`,
+      [fx.empresaId, `PROV_${Date.now()}`],
+    );
+    const otroProveedorId = otroProveedorResult.rows[0]!.id;
+
+    await servicios.facturas.registrarFactura({
+      sociedadId: fx.sociedadId,
+      terceroId: fx.terceroId,
+      fecha: fechaEnPeriodoAbierto(),
+      referencia,
+      lineas: [{ operacion: "AP.GASTO_OPERACION", monto: "10.00" }],
+      creadoPor: USUARIO,
+    });
+
+    const segunda = await servicios.facturas.registrarFactura({
+      sociedadId: fx.sociedadId,
+      terceroId: otroProveedorId,
+      fecha: fechaEnPeriodoAbierto(),
+      referencia,
+      lineas: [{ operacion: "AP.GASTO_OPERACION", monto: "20.00" }],
+      creadoPor: USUARIO,
+    });
+    expect(segunda.estado).toBe("contabilizado");
+  });
+
+  it("permite reutilizar la referencia de una factura anulada (storno)", async () => {
+    const referencia = "FACT-DUP-0003";
+    const factura = await servicios.facturas.registrarFactura({
+      sociedadId: fx.sociedadId,
+      terceroId: fx.terceroId,
+      fecha: fechaEnPeriodoAbierto(),
+      referencia,
+      lineas: [{ operacion: "AP.GASTO_OPERACION", monto: "10.00" }],
+      creadoPor: USUARIO,
+    });
+    await servicios.contabilizacion.stornar(factura.id, "Factura duplicada por error", USUARIO);
+
+    const reemplazo = await servicios.facturas.registrarFactura({
+      sociedadId: fx.sociedadId,
+      terceroId: fx.terceroId,
+      fecha: fechaEnPeriodoAbierto(),
+      referencia,
+      lineas: [{ operacion: "AP.GASTO_OPERACION", monto: "15.00" }],
+      creadoPor: USUARIO,
+    });
+    expect(reemplazo.estado).toBe("contabilizado");
   });
 });
 

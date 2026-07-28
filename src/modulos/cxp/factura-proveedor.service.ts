@@ -1,7 +1,12 @@
 import type { Pool } from "pg";
 import { aMonto, formatearMonto } from "../../nucleo/dinero.js";
 import { resolverCuenta, resolverIndicadorImpuesto } from "../../nucleo/determinacion.js";
-import { LineaInvalidaError, TerceroInactivoError, TerceroNoEncontradoError } from "../../nucleo/errores.js";
+import {
+  FacturaDuplicadaError,
+  LineaInvalidaError,
+  TerceroInactivoError,
+  TerceroNoEncontradoError,
+} from "../../nucleo/errores.js";
 import { DomainError } from "../../errors.js";
 import type { ContabilizacionService } from "../../nucleo/contabilizacion.service.js";
 import type { Documento, LineaInput } from "../../nucleo/tipos.js";
@@ -67,6 +72,26 @@ export class FacturaProveedorService {
 
     const moneda = await resolverMonedaSociedad(this.pool, input.sociedadId);
     const tipoDocumentoId = await resolverTipoDocumento(this.pool, "FP");
+
+    // Una factura del mismo proveedor no puede capturarse dos veces con la
+    // misma referencia. Un original anulado (storno) libera la referencia:
+    // ya no representa una obligación activa duplicada. Se busca por la
+    // línea de CxP (la que lleva tercero_id) porque documento no tiene
+    // tercero_id propio.
+    const duplicadaResult = await this.pool.query(
+      `SELECT 1
+       FROM documento d
+       JOIN linea_documento ld ON ld.documento_id = d.id
+       WHERE d.sociedad_id = $1 AND d.tipo_documento_id = $2 AND d.referencia = $3
+         AND d.estado IN ('borrador', 'contabilizado')
+         AND ld.tercero_id = $4
+       LIMIT 1`,
+      [input.sociedadId, tipoDocumentoId, input.referencia, input.terceroId],
+    );
+    if ((duplicadaResult.rowCount ?? 0) > 0) {
+      throw new FacturaDuplicadaError(input.referencia);
+    }
+
     const cuentaCxpId = await resolverCuenta(this.pool, input.sociedadId, "AP", "AP.CXP_DEFAULT");
 
     const lineas: LineaInput[] = [];

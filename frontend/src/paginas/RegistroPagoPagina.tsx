@@ -21,6 +21,10 @@ export function RegistroPagoPagina(): React.JSX.Element {
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resultado, setResultado] = useState<ResultadoPago | null>(null);
+  // Ver CapturaFacturaPagina: remount completo del <form> tras un envío
+  // exitoso para no dejarle a React nodos que una extensión del navegador
+  // pudo haber mutado por fuera de su control.
+  const [formKey, setFormKey] = useState(0);
 
   const cargarPartidas = useCallback(
     (idTercero: string) => {
@@ -82,6 +86,7 @@ export function RegistroPagoPagina(): React.JSX.Element {
       });
       setResultado(res);
       setReferencia("");
+      setFormKey((k) => k + 1);
       cargarPartidas(terceroId);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo registrar el pago.");
@@ -111,7 +116,8 @@ export function RegistroPagoPagina(): React.JSX.Element {
         />
       )}
 
-      <form className="tarjeta" onSubmit={enviar}>
+      <form key={formKey} className="tarjeta" onSubmit={enviar}>
+        <fieldset disabled={enviando} style={{ border: 0, margin: 0, padding: 0 }}>
         <div className="fila-campos">
           <div className="campo">
             <label htmlFor="proveedor-pago">Proveedor</label>
@@ -218,6 +224,7 @@ export function RegistroPagoPagina(): React.JSX.Element {
             {enviando ? "Contabilizando…" : "Registrar y contabilizar pago"}
           </button>
         </div>
+        </fieldset>
       </form>
 
       {resultado && (

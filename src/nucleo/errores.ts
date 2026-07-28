@@ -109,3 +109,13 @@ export class MontoAplicacionExcedeSaldoError extends DomainError {
     );
   }
 }
+
+export class FacturaDuplicadaError extends DomainError {
+  constructor(referencia: string) {
+    super(
+      "FACTURA_DUPLICADA",
+      `Ya existe una factura con referencia '${referencia}' registrada para este proveedor.`,
+      409,
+    );
+  }
+}

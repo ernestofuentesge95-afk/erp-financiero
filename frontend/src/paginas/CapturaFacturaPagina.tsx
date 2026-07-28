@@ -34,6 +34,13 @@ export function CapturaFacturaPagina(): React.JSX.Element {
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [facturaCreada, setFacturaCreada] = useState<Documento | null>(null);
+  // Se incrementa tras cada envío exitoso para forzar un remount completo del
+  // <form> (key={formKey}): así React crea nodos DOM nuevos en vez de tratar
+  // de parchear los que una extensión del navegador (traductor de Chrome,
+  // Grammarly) pudo haber mutado por fuera de React, que es lo que produce
+  // errores tipo "Failed to execute 'removeChild' on 'Node'" con la pantalla
+  // en blanco resultante.
+  const [formKey, setFormKey] = useState(0);
 
   const indicadorSeleccionado = indicadoresImpuesto.find((i) => i.codigo === indicadorCodigo) ?? null;
 
@@ -66,6 +73,7 @@ export function CapturaFacturaPagina(): React.JSX.Element {
     setIndicadorCodigo("");
     setLineas([lineaVacia(primeraOperacion)]);
     setFecha(hoyIso());
+    setFormKey((k) => k + 1);
   }
 
   async function enviar(evento: React.FormEvent): Promise<void> {
@@ -130,7 +138,8 @@ export function CapturaFacturaPagina(): React.JSX.Element {
         />
       )}
 
-      <form className="tarjeta" onSubmit={enviar}>
+      <form key={formKey} className="tarjeta" onSubmit={enviar}>
+        <fieldset disabled={enviando} style={{ border: 0, margin: 0, padding: 0 }}>
         <div className="fila-campos">
           <div className="campo">
             <label htmlFor="proveedor">Proveedor</label>
@@ -285,6 +294,7 @@ export function CapturaFacturaPagina(): React.JSX.Element {
             {enviando ? "Contabilizando…" : "Registrar y contabilizar factura"}
           </button>
         </div>
+        </fieldset>
       </form>
 
       {facturaCreada && (

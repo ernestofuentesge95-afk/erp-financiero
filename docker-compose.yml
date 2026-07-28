@@ -11,6 +11,7 @@ services:
       - "5432:5432"
     volumes:
       - erp_financiero_pgdata:/var/lib/postgresql/data
+      - ./docker/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U erp -d erp_financiero"]
       interval: 5s

@@ -6,14 +6,18 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
+    "pretest": "npm run migrate:up:test",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "seed": "tsx src/db/seed.ts",
     "migrate": "node-pg-migrate",
     "migrate:up": "node-pg-migrate up",
     "migrate:down": "node-pg-migrate down",
-    "migrate:create": "node-pg-migrate create --migration-file-language cjs"
+    "migrate:create": "node-pg-migrate create --migration-file-language cjs",
+    "migrate:up:test": "DATABASE_URL=postgres://erp:erp@localhost:5432/erp_financiero_test node-pg-migrate up",
+    "migrate:down:test": "DATABASE_URL=postgres://erp:erp@localhost:5432/erp_financiero_test node-pg-migrate down"
   },
   "keywords": [],
   "author": "",
@@ -21,6 +25,7 @@
   "type": "module",
   "private": true,
   "dependencies": {
+    "decimal.js": "^10.6.0",
     "dotenv": "^17.4.2",
     "fastify": "^5.10.0",
     "pg": "^8.22.0",

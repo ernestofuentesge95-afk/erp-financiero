@@ -2,6 +2,10 @@ import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastif
 import { env } from "./config/env.js";
 import { registerErrorHandler } from "./plugins/error-handler.js";
 import { createPool } from "./db/pool.js";
+import { ContabilizacionService } from "./nucleo/contabilizacion.service.js";
+import { registrarRutasCatalogos } from "./routes/catalogos.js";
+import { registrarRutasDocumentos } from "./routes/documentos.js";
+import { registrarRutasReportes } from "./routes/reportes.js";
 
 const loggerOptions: FastifyServerOptions["logger"] =
   env.NODE_ENV === "development"
@@ -11,6 +15,7 @@ const loggerOptions: FastifyServerOptions["logger"] =
 export function buildApp(): FastifyInstance {
   const app = Fastify({ logger: loggerOptions });
   const pool = createPool();
+  const contabilizacion = new ContabilizacionService(pool);
 
   registerErrorHandler(app);
 
@@ -22,6 +27,10 @@ export function buildApp(): FastifyInstance {
     await pool.query("SELECT 1");
     return { status: "ok" };
   });
+
+  registrarRutasCatalogos(app, { pool });
+  registrarRutasDocumentos(app, { contabilizacion });
+  registrarRutasReportes(app, { pool });
 
   app.addHook("onClose", async () => {
     await pool.end();

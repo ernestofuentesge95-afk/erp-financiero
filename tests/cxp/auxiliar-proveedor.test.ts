@@ -6,6 +6,7 @@ import { ContabilizacionService } from "../../src/nucleo/contabilizacion.service
 import { FacturaProveedorService } from "../../src/modulos/cxp/factura-proveedor.service.js";
 import { PagoService } from "../../src/modulos/cxp/pago.service.js";
 import { auxiliarProveedor, partidasAbiertasPorProveedor } from "../../src/modulos/cxp/reportes.js";
+import { sumarDias } from "../../src/modulos/cxp/util.js";
 
 const USUARIO = "test-auxiliar@erp-financiero";
 
@@ -123,7 +124,7 @@ describe("auxiliarProveedor", () => {
     expect(partidas.some((p) => p.lineaId === lineaCxp.id)).toBe(false);
   });
 
-  it("el saldo corriente se acumula movimiento a movimiento en orden cronológico", async () => {
+  it("el saldo corriente se acumula movimiento a movimiento en orden cronológico (mismo día)", async () => {
     const fx: FixtureCxP = await crearFixtureCxP(testPool);
     const servicios = crearServicios();
 
@@ -160,6 +161,69 @@ describe("auxiliarProveedor", () => {
       fechaHasta,
     });
 
+    // Dentro del mismo día, el desempate es el orden de creación (d.id).
     expect(auxiliar.movimientos.map((m) => Number(m.saldoAcumulado))).toEqual([200, 250, 130]);
+  });
+
+  it("un documento capturado después pero con fecha_contabilizacion anterior aparece en su posición cronológica, no al final", async () => {
+    const fx: FixtureCxP = await crearFixtureCxP(testPool);
+    const servicios = crearServicios();
+
+    const periodoResult = await testPool.query<{ fecha_inicio: string }>(
+      `SELECT fecha_inicio FROM periodo_contable WHERE id = $1`,
+      [fx.periodoAbiertoId],
+    );
+    const fechaTemprana = periodoResult.rows[0]!.fecha_inicio;
+    const fechaTardia = sumarDias(fechaTemprana, 10);
+
+    // Se contabiliza PRIMERO (id más bajo) pero con la fecha contable más TARDÍA.
+    const facturaTardia = await servicios.facturas.registrarFactura({
+      sociedadId: fx.sociedadId,
+      terceroId: fx.terceroId,
+      fecha: fechaTardia,
+      referencia: "FACT-AUX-TARDIA",
+      lineas: [{ operacion: "AP.GASTO_OPERACION", monto: "200.00" }],
+      creadoPor: USUARIO,
+    });
+
+    // Se captura DESPUÉS (id más alto — llegó con retraso) pero con fecha
+    // contable ANTERIOR a la factura de arriba.
+    const facturaTemprana = await servicios.facturas.registrarFactura({
+      sociedadId: fx.sociedadId,
+      terceroId: fx.terceroId,
+      fecha: fechaTemprana,
+      referencia: "FACT-AUX-TEMPRANA",
+      lineas: [{ operacion: "AP.GASTO_OPERACION", monto: "50.00" }],
+      creadoPor: USUARIO,
+    });
+    expect(Number(facturaTemprana.id)).toBeGreaterThan(Number(facturaTardia.id));
+
+    const lineaTardia = facturaTardia.lineas.find((l) => l.cuentaId === fx.cuentaCxpId)!;
+    await servicios.pagos.registrarPago({
+      sociedadId: fx.sociedadId,
+      terceroId: fx.terceroId,
+      fecha: fechaTardia,
+      referencia: "PAGO-AUX-TARDIA",
+      aplicaciones: [{ lineaAbiertaId: lineaTardia.id, monto: "120.00" }],
+      creadoPor: USUARIO,
+    });
+
+    const auxiliar = await auxiliarProveedor(testPool, {
+      sociedadId: fx.sociedadId,
+      terceroId: fx.terceroId,
+      fechaDesde: fechaTemprana,
+      fechaHasta: fechaTardia,
+    });
+
+    // La factura "temprana" —capturada al final, con el id más alto— debe
+    // quedar PRIMERA en el auxiliar porque su fecha_contabilizacion es
+    // anterior: no al final solo por haberse registrado después. Dentro del
+    // día "tardío", la factura (id menor) va antes que el pago (id mayor).
+    expect(auxiliar.movimientos.map((m) => m.referencia)).toEqual([
+      "FACT-AUX-TEMPRANA",
+      "FACT-AUX-TARDIA",
+      "PAGO-AUX-TARDIA",
+    ]);
+    expect(auxiliar.movimientos.map((m) => Number(m.saldoAcumulado))).toEqual([50, 250, 130]);
   });
 });

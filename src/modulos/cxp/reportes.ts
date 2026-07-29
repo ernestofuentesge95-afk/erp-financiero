@@ -172,6 +172,7 @@ export async function antiguedadCxP(pool: Pool, input: AntiguedadCxPInput): Prom
 export interface MovimientoAuxiliarProveedor {
   lineaId: string;
   documentoId: string;
+  /** fecha_contabilizacion del documento — la que fija el período y el orden real del movimiento, no fecha_documento. */
   fecha: string;
   tipoDocumento: string;
   numero: string | null;
@@ -201,7 +202,7 @@ interface FilaAuxiliar {
   numero: string | null;
   tipo_documento_codigo: string;
   referencia: string | null;
-  fecha_documento: string;
+  fecha_contabilizacion: string;
   debe_ml: string;
   haber_ml: string;
   estado_partida: EstadoPartida | null;
@@ -219,10 +220,15 @@ interface FilaAuxiliar {
  * original, lo compensa con líneas espejo, y ambos lados deben contar para
  * que el saldo acumulado sea correcto.
  *
- * Orden cronológico: por fecha_documento y luego por d.id (PK autoincremental
- * compartida por toda la tabla documento), nunca por d.numero — numero es
- * correlativo POR tipo_documento (invariante 7), así que una factura #2 y un
- * pago #1 del mismo día no dicen nada sobre cuál pasó primero.
+ * Se filtra y ordena por fecha_contabilizacion, no por fecha_documento: es
+ * fecha_contabilizacion la que fija el período (docs/01 §3) y por tanto la
+ * posición real de un movimiento en el libro — una factura capturada con
+ * retraso pero con fecha_contabilizacion anterior debe aparecer en esa
+ * posición cronológica, no al final solo porque se registró después. El
+ * desempate es d.id (PK autoincremental compartida por toda la tabla
+ * documento, nunca d.numero, que es correlativo POR tipo_documento —
+ * invariante 7 — y por tanto no ordena entre tipos distintos) y solo importa
+ * dentro de un mismo día.
  */
 export async function auxiliarProveedor(
   pool: Pool,
@@ -230,7 +236,7 @@ export async function auxiliarProveedor(
 ): Promise<AuxiliarProveedorResultado> {
   const result = await pool.query<FilaAuxiliar>(
     `SELECT ld.id AS linea_id, d.id AS documento_id, d.numero, td.codigo AS tipo_documento_codigo,
-            d.referencia, d.fecha_documento, ld.debe_ml, ld.haber_ml, ld.estado_partida
+            d.referencia, d.fecha_contabilizacion, ld.debe_ml, ld.haber_ml, ld.estado_partida
      FROM linea_documento ld
      JOIN documento d ON d.id = ld.documento_id
      JOIN cuenta cu ON cu.id = ld.cuenta_id
@@ -240,8 +246,8 @@ export async function auxiliarProveedor(
        AND d.estado IN ('contabilizado', 'anulado')
        AND cu.gestion_partidas_abiertas = true
        AND cu.tipo = 'pasivo'
-       AND d.fecha_documento BETWEEN $3 AND $4
-     ORDER BY d.fecha_documento, d.id, ld.numero_linea`,
+       AND d.fecha_contabilizacion BETWEEN $3 AND $4
+     ORDER BY d.fecha_contabilizacion, d.id, ld.numero_linea`,
     [input.sociedadId, input.terceroId, input.fechaDesde, input.fechaHasta],
   );
 
@@ -251,7 +257,7 @@ export async function auxiliarProveedor(
     return {
       lineaId: row.linea_id,
       documentoId: row.documento_id,
-      fecha: row.fecha_documento,
+      fecha: row.fecha_contabilizacion,
       tipoDocumento: row.tipo_documento_codigo,
       numero: row.numero,
       referencia: row.referencia,
